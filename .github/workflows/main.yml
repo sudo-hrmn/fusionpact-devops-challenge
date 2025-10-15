@@ -52,48 +52,44 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
+    - name: Set ECR Registry
+      run: |
+        echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
+
     - name: Create ECR repositories if they don't exist
       run: |
-        aws ecr describe-repositories --repository-names $ECR_REPOSITORY_BACKEND || aws ecr create-repository --repository-name $ECR_REPOSITORY_BACKEND
-        aws ecr describe-repositories --repository-names $ECR_REPOSITORY_FRONTEND || aws ecr create-repository --repository-name $ECR_REPOSITORY_FRONTEND
+        aws ecr describe-repositories --repository-names $ECR_REPOSITORY_BACKEND --region $AWS_REGION || aws ecr create-repository --repository-name $ECR_REPOSITORY_BACKEND --region $AWS_REGION
+        aws ecr describe-repositories --repository-names $ECR_REPOSITORY_FRONTEND --region $AWS_REGION || aws ecr create-repository --repository-name $ECR_REPOSITORY_FRONTEND --region $AWS_REGION
 
     - name: Build and push backend image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
       run: |
         cd backend
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }} .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }}
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }} $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
 
     - name: Build and push frontend image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
       run: |
         cd frontend
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }} .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }}
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }} $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
 
     - name: Deploy to EC2
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
       run: |
         echo "${{ secrets.EC2_SSH_KEY }}" > private_key.pem
         chmod 600 private_key.pem
         
-        ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_HOST }} << 'EOF'
-          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+        ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_HOST }} << EOF
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
           
-          docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_BACKEND }}:latest
-          docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_FRONTEND }}:latest
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
           
           cd /home/ubuntu/fusionpact-devops-challenge
-          export ECR_REGISTRY=${{ env.ECR_REGISTRY }}
-          sudo docker-compose -f docker-compose.prod.yml down
-          sudo docker-compose -f docker-compose.prod.yml up -d
+          export ECR_REGISTRY=$ECR_REGISTRY
+          sudo -E docker-compose -f docker-compose.prod.yml down
+          sudo -E docker-compose -f docker-compose.prod.yml up -d
         EOF
