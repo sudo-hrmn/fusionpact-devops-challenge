@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY_BACKEND: fusionpact-backend
-  ECR_REPOSITORY_FRONTEND: fusionpact-frontend
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -32,7 +27,7 @@ jobs:
         cd backend
         python -c "import app.main; print('Backend imports successfully')"
 
-  build-and-deploy:
+  deploy:
     needs: test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
@@ -41,55 +36,32 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
-
-    - name: Set ECR Registry
-      run: |
-        echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
-
-    - name: Create ECR repositories if they don't exist
-      run: |
-        aws ecr describe-repositories --repository-names $ECR_REPOSITORY_BACKEND --region $AWS_REGION || aws ecr create-repository --repository-name $ECR_REPOSITORY_BACKEND --region $AWS_REGION
-        aws ecr describe-repositories --repository-names $ECR_REPOSITORY_FRONTEND --region $AWS_REGION || aws ecr create-repository --repository-name $ECR_REPOSITORY_FRONTEND --region $AWS_REGION
-
-    - name: Build and push backend image
-      run: |
-        cd backend
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }} .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }}
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }} $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
-
-    - name: Build and push frontend image
-      run: |
-        cd frontend
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }} .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }}
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }} $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
-
     - name: Deploy to EC2
       run: |
         echo "${{ secrets.EC2_SSH_KEY }}" > private_key.pem
         chmod 600 private_key.pem
         
-        ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_HOST }} << EOF
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
-          
-          docker pull $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
-          docker pull $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
-          
+        # Copy files to EC2
+        scp -o StrictHostKeyChecking=no -i private_key.pem -r . ubuntu@${{ secrets.EC2_HOST }}:/tmp/fusionpact-update/
+        
+        # Deploy on EC2
+        ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_HOST }} << 'EOF'
+          # Stop current services
           cd /home/ubuntu/fusionpact-devops-challenge
-          export ECR_REGISTRY=$ECR_REGISTRY
-          sudo -E docker-compose -f docker-compose.prod.yml down
-          sudo -E docker-compose -f docker-compose.prod.yml up -d
+          sudo docker-compose down
+          
+          # Update code
+          cp -r /tmp/fusionpact-update/* /home/ubuntu/fusionpact-devops-challenge/
+          
+          # Rebuild and restart services
+          sudo docker-compose build --no-cache
+          sudo docker-compose up -d
+          
+          # Cleanup
+          rm -rf /tmp/fusionpact-update
+          
+          # Verify deployment
+          sleep 10
+          curl -f http://localhost || echo "Frontend check failed"
+          curl -f http://localhost:8000 || echo "Backend check failed"
         EOF
