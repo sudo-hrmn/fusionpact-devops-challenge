@@ -3,3 +3,29 @@ node_modules
 .env.local
 dist
 build
+
+# SOP and documentation files (not for GitHub)
+*SOP*.md
+*SOP*.pdf
+DEPLOYMENT.md
+AWS-DEPLOYMENT-GUIDE.md
+
+# AWS deployment scripts
+deploy-aws.sh
+cleanup-aws.sh
+test-deployment.sh
+user-data.sh
+awscliv2.zip
+aws/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
