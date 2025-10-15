@@ -41,6 +41,9 @@ jobs:
         echo "${{ secrets.EC2_SSH_KEY }}" > private_key.pem
         chmod 600 private_key.pem
         
+        # Create target directory on EC2
+        ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_HOST }} "mkdir -p /tmp/fusionpact-update"
+        
         # Copy files to EC2
         scp -o StrictHostKeyChecking=no -i private_key.pem -r . ubuntu@${{ secrets.EC2_HOST }}:/tmp/fusionpact-update/
         
